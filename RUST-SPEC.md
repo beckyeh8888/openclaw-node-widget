@@ -375,7 +375,7 @@ openclaw-node-widget/
     └── v1.4/
 ```
 
-## 11. Build & Release
+## 11. Build, Packaging & Release
 
 ### Dependencies (Cargo.toml)
 
@@ -402,12 +402,48 @@ cross build --release --target x86_64-unknown-linux-gnu
 cross build --release --target aarch64-apple-darwin
 ```
 
+### Platform Packaging
+
+Each platform gets a "download and run" experience:
+
+| Platform | Package Format | Contents | Install Experience |
+|----------|---------------|----------|-------------------|
+| **Windows** | `.msi` installer + portable `.zip` | `openclaw-node-widget.exe` | MSI: double-click → Next → Finish (adds to Start Menu + optional auto-start). ZIP: extract anywhere, double-click exe |
+| **macOS** | `.dmg` + portable binary | `OpenClaw Node Widget.app` | DMG: drag to Applications. Binary: `brew install --cask openclaw-node-widget` (future) |
+| **Linux** | `.deb` + `.rpm` + `.AppImage` + portable binary | `openclaw-node-widget` | AppImage: download, chmod +x, run. Deb/RPM: package manager install. Adds .desktop file |
+
+#### Windows MSI
+- Built with `cargo-wix` (WiX Toolset)
+- Installs to `C:\Program Files\OpenClaw Node Widget\`
+- Creates Start Menu shortcut
+- Optional: add to startup (checkbox in installer)
+- Uninstall via Add/Remove Programs
+
+#### macOS DMG
+- Built with `create-dmg` in CI
+- `.app` bundle with `Info.plist` (LSUIElement=true for no dock icon)
+- Code-signed + notarized (requires Apple Developer account, can defer)
+- Unsigned build works with right-click → Open
+
+#### Linux
+- **AppImage**: universal, no install needed — `chmod +x` and run
+- **Deb/Rpm**: built with `cargo-deb` / `cargo-generate-rpm`
+- Installs to `/usr/bin/`, adds XDG autostart `.desktop` file
+- Depends on `libappindicator3` (most distros have it)
+
 ### GitHub Actions CI
 
-- On push to `main`: build all 3 platforms
-- On tag `v*`: build + create GitHub Release with binaries
+- On push to `main`: build + test all 3 platforms
+- On tag `v*`: build → package → create GitHub Release with all artifacts
 - Matrix: `windows-latest`, `macos-latest`, `ubuntu-latest`
-- Artifact: single binary per platform (~3-5 MB)
+- Release artifacts:
+  - `openclaw-node-widget-v{version}-windows-x64.msi`
+  - `openclaw-node-widget-v{version}-windows-x64.zip`
+  - `openclaw-node-widget-v{version}-macos-arm64.dmg`
+  - `openclaw-node-widget-v{version}-macos-x64.dmg`
+  - `openclaw-node-widget-v{version}-linux-x64.AppImage`
+  - `openclaw-node-widget-v{version}-linux-x64.deb`
+  - `openclaw-node-widget-v{version}-linux-x64.rpm`
 
 ## 12. Migration Path from AHK v1.4
 
