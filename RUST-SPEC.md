@@ -13,9 +13,156 @@ A lightweight system tray widget that monitors and controls individual OpenClaw 
 - Modern configuration format (TOML vs INI)
 - Proper WebSocket integration for real-time status
 
-**Scope**: Monitor ONE node process, auto-restart on failure, provide quick access controls via tray icon.
+**Scope**: Each machine runs its own widget instance to manage its own Node. One widget = one Node.
 
-## 2. Features & Priority
+**Deployment model**: Download binary → double-click → setup wizard asks Gateway URL + token → done.
+
+---
+
+## 2. Network Architecture
+
+### Connection Model
+
+```
+┌──────────────┐    WebSocket (WS/WSS)    ┌──────────────┐
+│  Widget      │ ◄──────────────────────► │  Gateway     │
+│  (per machine)│    + operator token      │  (central)   │
+└──────────────┘                          └──────────────┘
+       │                                         │
+       ▼                                         ▼
+┌──────────────┐                          ┌──────────────┐
+│  Node Process│                          │  Other Nodes │
+│  (local)     │                          │  (remote)    │
+└──────────────┘                          └──────────────┘
+```
+
+### Scenarios
+
+| Scenario | Gateway URL | Transport | Token |
+|----------|------------|-----------|-------|
+| Same machine | `ws://localhost:3000` | Plain WS | Optional |
+| LAN / Tailscale | `ws://100.x.x.x:3000` | Plain WS | Required |
+| Public / Internet | `wss://gateway.example.com` | WSS (TLS) | Required |
+
+### Connection Behavior
+
+- **Startup**: Connect to Gateway WebSocket as operator role
+- **Auth**: Send gateway token on handshake (read from config or auto-discovered from `~/.openclaw/openclaw.json`)
+- **Heartbeat**: Gateway sends periodic pings; widget responds with pong
+- **Reconnect**: On disconnect → exponential backoff (1s, 2s, 4s, 8s… max 60s)
+- **Offline fallback**: If Gateway unreachable for 30s+ → fall back to local process detection (`sysinfo` crate, check for `openclaw node run` in command line)
+
+### Status Detection Priority
+
+1. **WebSocket**: Gateway reports Node registered + connected → Online
+2. **Process scan**: `node.exe`/`node` process with `openclaw node run` in args → Online (degraded)
+3. **Both fail** → Offline
+
+---
+
+## 3. BDD Scenarios
+
+### First Launch
+
+```gherkin
+Scenario: First time setup
+  Given the user downloads and runs the widget binary
+  And no config.toml exists
+  When the widget starts
+  Then a setup wizard window appears
+  And asks for Gateway URL (default: ws://localhost:3000)
+  And asks for Gateway token (with "paste here" field)
+  And has a "Test Connection" button
+  When the user fills in valid values and clicks "Save"
+  Then config.toml is created at ~/.config/openclaw-node-widget/config.toml
+  And the widget minimizes to system tray
+  And begins monitoring
+```
+
+### Normal Operation
+
+```gherkin
+Scenario: Node is running normally
+  Given the widget is connected to Gateway
+  And the Node is registered and online
+  Then the tray icon shows green (online)
+  And the tooltip shows "OpenClaw Node: Online"
+
+Scenario: Node goes offline
+  Given the widget detects Node offline
+  When 3 consecutive checks fail (45 seconds)
+  And auto-restart is enabled
+  Then the widget restarts the Node silently
+  And shows a notification "Node restarted"
+  And the tray icon changes to green after Node comes back
+
+Scenario: User manually stops Node
+  Given the user right-clicks → "Stop Node"
+  Then the Node process is killed
+  And a 120-second cooldown starts
+  And auto-restart is suppressed during cooldown
+  And the tray icon shows red (offline)
+```
+
+### Network Failures
+
+```gherkin
+Scenario: Gateway connection lost
+  Given the widget was connected to Gateway
+  When the WebSocket connection drops
+  Then the widget switches to process-scan fallback
+  And the tooltip shows "OpenClaw Node: Online (no gateway)"
+  And reconnection attempts start with exponential backoff
+
+Scenario: Gateway unreachable on startup
+  Given the Gateway URL is configured but not reachable
+  When the widget starts
+  Then it falls back to process-scan mode immediately
+  And shows a notification "Gateway unreachable, using local detection"
+  And retries Gateway connection every 60 seconds in background
+```
+
+### Settings
+
+```gherkin
+Scenario: Change settings via tray menu
+  Given the user right-clicks → "Settings"
+  Then the setup wizard window reopens with current values
+  When the user changes Gateway URL and clicks "Save"
+  Then config.toml is updated
+  And the widget reconnects to the new Gateway
+```
+
+---
+
+## 4. Setup Wizard
+
+A minimal native window (single panel, not multi-tab) shown on:
+- First launch (no config found)
+- Right-click → "Settings"
+
+### Fields
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| Gateway URL | text input | `ws://localhost:3000` | Validates URL format |
+| Gateway Token | password input | (empty) | "Paste from `openclaw status`" hint |
+| Auto-restart | checkbox | ✅ on | |
+| Auto-start on login | checkbox | ☐ off | |
+
+### Buttons
+- **Test Connection** — attempts WebSocket handshake, shows ✅/❌
+- **Save** — writes config.toml, closes window, starts monitoring
+- **Cancel** — exits app (first launch) or closes window (settings)
+
+### Implementation
+- Use `native-dialog` or `rfd` crate for simple cross-platform dialogs
+- Or minimal `egui` window (adds ~1MB to binary but gives full control)
+- Decision: defer to implementation phase, try `native-dialog` first
+
+---
+
+## 5. Features & Priority
 
 ### P0 - Core (Must Have)
 - [ ] **Status indicator**: System tray icon showing Node online/offline state
@@ -38,7 +185,7 @@ A lightweight system tray widget that monitors and controls individual OpenClaw 
 - [ ] **Dark mode icon variants**: Themed icons for dark/light modes
 - [ ] **Stats overlay**: Right-click menu shows basic stats
 
-## 3. Architecture
+## 6. Architecture
 
 ```
 ┌─────────────────────────────┐
@@ -80,7 +227,7 @@ A lightweight system tray widget that monitors and controls individual OpenClaw 
 - **Background task**: Tokio runtime for WebSocket and periodic checks
 - **Process spawning**: Platform-specific (CreateProcessW on Windows, fork/exec on *nix)
 
-## 4. Configuration File Specification
+## 7. Configuration File Specification
 
 **Location**: `~/.openclaw/config.toml` (reads automatically) or `~/.config/openclaw-node-widget/config.toml`
 
@@ -135,7 +282,7 @@ file = ""          # Optional: log file path
 syslog = false     # Use system logger on *nix
 ```
 
-## 5. Platform-Specific Behavior
+## 8. Platform-Specific Behavior
 
 | Feature               | Windows              | macOS                | Linux (Gnome/KDE)    | Linux (headless)     |
 |---------------------|---------------------|---------------------|---------------------|---------------------|
@@ -147,7 +294,7 @@ syslog = false     # Use system logger on *nix
 | **Path separator**  | \                    | /                   | /                   | /                   |
 | **Process kill**    | TerminateProcess    | kill(pid, SIGTERM)  | kill(pid, SIGTERM)  | kill(pid, SIGTERM)   |
 
-## 6. Repository Structure
+## 9. Repository Structure
 
 ```
 openclaw-node-widget/
@@ -176,7 +323,7 @@ openclaw-node-widget/
     └── v1.4/
 ```
 
-## 7. Build & Release
+## 10. Build & Release
 
 ### Dependencies (Cargo.toml)
 
@@ -210,7 +357,7 @@ cross build --release --target aarch64-apple-darwin
 - Matrix: `windows-latest`, `macos-latest`, `ubuntu-latest`
 - Artifact: single binary per platform (~3-5 MB)
 
-## 8. Migration Path from AHK v1.4
+## 11. Migration Path from AHK v1.4
 
 | AHK v1.4 | Rust v2.0 |
 |-----------|-----------|
@@ -224,7 +371,7 @@ cross build --release --target aarch64-apple-darwin
 
 **Transition**: Ship Rust v2.0 alongside AHK v1.4. AHK scripts moved to `scripts/v1.4/` for reference. No migration tool needed — just replace the binary and create `config.toml`.
 
-## 9. Future Ideas (P2+)
+## 12. Future Ideas (P2+)
 
 - **Multi-node dashboard**: Monitor multiple nodes from one widget (remote gateways)
 - **Desktop notifications**: Toast/banner on status change (online→offline, restart events)
