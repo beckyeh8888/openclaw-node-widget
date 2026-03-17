@@ -162,7 +162,59 @@ A minimal native window (single panel, not multi-tab) shown on:
 
 ---
 
-## 5. Features & Priority
+## 5. CLI Interface
+
+The widget supports both GUI (default) and CLI modes.
+
+### Usage
+
+```bash
+# GUI mode (default) — starts tray widget, shows setup wizard if no config
+openclaw-node-widget
+
+# CLI flags override config.toml (useful for scripting / one-off)
+openclaw-node-widget --gateway ws://100.68.12.51:3000 --token abc123
+
+# Setup wizard from CLI (writes config.toml interactively in terminal)
+openclaw-node-widget setup
+  Gateway URL [ws://localhost:3000]: ws://100.68.12.51:3000
+  Gateway Token: ********
+  Testing connection... ✅ Connected (Node: Online)
+  Auto-restart? [Y/n]: Y
+  Auto-start on login? [y/N]: y
+  Config saved to ~/.config/openclaw-node-widget/config.toml
+
+# Headless mode — no tray, just monitor + auto-restart (for servers / SSH)
+openclaw-node-widget daemon
+
+# One-shot status check (for scripts / health checks)
+openclaw-node-widget status
+  Node: Online (PID 12345)
+  Gateway: Connected (ws://localhost:3000)
+  Uptime: 3d 14h 22m
+
+# Stop / restart node from CLI
+openclaw-node-widget stop
+openclaw-node-widget restart
+
+# Show current config
+openclaw-node-widget config
+```
+
+### Startup Logic
+
+```
+START
+  ├─ Has CLI flags (--gateway/--token)? → Use flags, skip config
+  ├─ Has config.toml? → Load config → Start tray widget
+  └─ No config?
+       ├─ Is TTY (terminal)? → Run interactive `setup` in terminal
+       └─ Is GUI (double-click)? → Show setup wizard window
+```
+
+---
+
+## 6. Features & Priority
 
 ### P0 - Core (Must Have)
 - [ ] **Status indicator**: System tray icon showing Node online/offline state
@@ -185,7 +237,7 @@ A minimal native window (single panel, not multi-tab) shown on:
 - [ ] **Dark mode icon variants**: Themed icons for dark/light modes
 - [ ] **Stats overlay**: Right-click menu shows basic stats
 
-## 6. Architecture
+## 7. Architecture
 
 ```
 ┌─────────────────────────────┐
@@ -227,7 +279,7 @@ A minimal native window (single panel, not multi-tab) shown on:
 - **Background task**: Tokio runtime for WebSocket and periodic checks
 - **Process spawning**: Platform-specific (CreateProcessW on Windows, fork/exec on *nix)
 
-## 7. Configuration File Specification
+## 8. Configuration File Specification
 
 **Location**: `~/.openclaw/config.toml` (reads automatically) or `~/.config/openclaw-node-widget/config.toml`
 
@@ -282,7 +334,7 @@ file = ""          # Optional: log file path
 syslog = false     # Use system logger on *nix
 ```
 
-## 8. Platform-Specific Behavior
+## 9. Platform-Specific Behavior
 
 | Feature               | Windows              | macOS                | Linux (Gnome/KDE)    | Linux (headless)     |
 |---------------------|---------------------|---------------------|---------------------|---------------------|
@@ -294,7 +346,7 @@ syslog = false     # Use system logger on *nix
 | **Path separator**  | \                    | /                   | /                   | /                   |
 | **Process kill**    | TerminateProcess    | kill(pid, SIGTERM)  | kill(pid, SIGTERM)  | kill(pid, SIGTERM)   |
 
-## 9. Repository Structure
+## 10. Repository Structure
 
 ```
 openclaw-node-widget/
@@ -323,7 +375,7 @@ openclaw-node-widget/
     └── v1.4/
 ```
 
-## 10. Build & Release
+## 11. Build & Release
 
 ### Dependencies (Cargo.toml)
 
@@ -357,7 +409,7 @@ cross build --release --target aarch64-apple-darwin
 - Matrix: `windows-latest`, `macos-latest`, `ubuntu-latest`
 - Artifact: single binary per platform (~3-5 MB)
 
-## 11. Migration Path from AHK v1.4
+## 12. Migration Path from AHK v1.4
 
 | AHK v1.4 | Rust v2.0 |
 |-----------|-----------|
@@ -371,7 +423,7 @@ cross build --release --target aarch64-apple-darwin
 
 **Transition**: Ship Rust v2.0 alongside AHK v1.4. AHK scripts moved to `scripts/v1.4/` for reference. No migration tool needed — just replace the binary and create `config.toml`.
 
-## 12. Future Ideas (P2+)
+## 13. Future Ideas (P2+)
 
 - **Multi-node dashboard**: Monitor multiple nodes from one widget (remote gateways)
 - **Desktop notifications**: Toast/banner on status change (online→offline, restart events)
