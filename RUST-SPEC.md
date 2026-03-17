@@ -133,6 +133,205 @@ Scenario: Change settings via tray menu
   And the widget reconnects to the new Gateway
 ```
 
+### Installation (per platform)
+
+```gherkin
+Scenario: Windows MSI install
+  Given the user downloads the .msi file
+  When they double-click and follow the wizard (Next → Next → Finish)
+  Then the binary is installed to C:\Program Files\OpenClaw Node Widget\
+  And a Start Menu shortcut is created
+  And the widget launches automatically after install
+  And the setup wizard appears (first run)
+
+Scenario: Windows portable install
+  Given the user downloads the .zip file
+  When they extract and double-click openclaw-node-widget.exe
+  Then the setup wizard appears
+  And no system-level installation is needed
+
+Scenario: macOS DMG install
+  Given the user downloads the .dmg file
+  When they open it and drag the app to Applications
+  And launch it from Applications
+  Then macOS may warn "unidentified developer" (unsigned build)
+  When the user right-clicks → Open → confirms
+  Then the setup wizard appears
+  And no dock icon is shown (LSUIElement)
+
+Scenario: Linux AppImage install
+  Given the user downloads the .AppImage file
+  When they run chmod +x and execute it
+  Then the setup wizard appears
+  And the tray icon appears (requires libappindicator)
+
+Scenario: Linux deb install
+  Given the user runs dpkg -i or apt install on the .deb file
+  Then the binary is installed to /usr/bin/
+  And a .desktop file is placed in /usr/share/applications/
+  When the user launches from app menu or terminal
+  Then the setup wizard appears
+
+Scenario: Uninstall (all platforms)
+  Given the widget is installed
+  When the user uninstalls (Add/Remove Programs / trash .app / apt remove)
+  Then the binary is removed
+  And auto-start entries are cleaned up (Registry / launchd plist / XDG desktop)
+  But config.toml is preserved (user data, not deleted)
+```
+
+### CLI Mode
+
+```gherkin
+Scenario: Interactive setup via terminal
+  Given the user runs "openclaw-node-widget setup" in a terminal
+  Then prompts appear for Gateway URL, token, auto-restart, auto-start
+  When the user fills in values
+  And the tool tests the connection and shows ✅ or ❌
+  And the user confirms
+  Then config.toml is written
+
+Scenario: Daemon mode (headless server)
+  Given the user runs "openclaw-node-widget daemon"
+  Then no tray icon is created
+  And the widget monitors Node via WebSocket + process scan
+  And auto-restart works the same as GUI mode
+  And logs go to stdout (or file if configured)
+  And the process runs in foreground (user manages with systemd/screen/etc)
+
+Scenario: One-shot status check
+  Given the user runs "openclaw-node-widget status"
+  Then it prints Node status, Gateway connection, PID, and uptime
+  And exits with code 0 (online) or 1 (offline)
+
+Scenario: CLI stop/restart
+  Given the user runs "openclaw-node-widget stop"
+  Then the Node process is killed
+  And exit code 0 is returned
+  Given the user runs "openclaw-node-widget restart"
+  Then the Node is stopped then started silently
+  And exit code 0 is returned after Node is confirmed running
+```
+
+### Authentication & Errors
+
+```gherkin
+Scenario: Wrong gateway token
+  Given the user enters an invalid token in setup wizard
+  When they click "Test Connection"
+  Then the connection is rejected by Gateway
+  And the wizard shows "❌ Authentication failed — check your token"
+  And does not save config
+
+Scenario: Gateway port occupied / unreachable
+  Given the configured gateway URL points to a non-responsive port
+  When the widget tries to connect
+  Then after 5 seconds timeout it shows "❌ Cannot reach Gateway"
+  And falls back to process-scan mode
+  And retries in background with exponential backoff
+
+Scenario: Node fails to start (crash loop)
+  Given auto-restart is enabled
+  And the Node process crashes immediately after starting
+  When the widget detects 5 consecutive failed restarts
+  Then auto-restart is paused
+  And a notification shows "Node keeps crashing — auto-restart paused"
+  And the tray tooltip shows "Node: Error (restart paused)"
+  And the user can manually retry via right-click → "Restart Node"
+
+Scenario: Insufficient permissions
+  Given the widget tries to kill a Node process owned by another user/SYSTEM
+  When TerminateProcess / kill fails with access denied
+  Then a notification shows "Cannot stop Node — permission denied"
+  And suggests running as administrator (Windows) or with sudo
+```
+
+### Edge Cases
+
+```gherkin
+Scenario: Duplicate widget instance
+  Given the widget is already running
+  When the user launches a second instance
+  Then the second instance detects the first (via lock file or named mutex)
+  And shows "Widget is already running" notification
+  And brings the existing tray icon to focus (if possible)
+  And the second instance exits
+
+Scenario: Config file corrupted
+  Given config.toml exists but contains invalid TOML
+  When the widget starts
+  Then it shows an error "Config file corrupted"
+  And offers to "Reset to defaults" or "Open config file"
+  And does not crash
+
+Scenario: Node binary not found
+  Given the configured node command is not in PATH
+  When the user clicks "Restart Node"
+  Then a notification shows "Cannot find 'openclaw' — is it installed?"
+  And the tray icon stays red
+```
+
+### Auto-start
+
+```gherkin
+Scenario: Enable auto-start on Windows
+  Given the user toggles "Auto-start on login" to ON
+  Then a Registry key is created at HKCU\...\Run\OpenClawNodeWidget
+  And the value points to the widget exe path
+  When Windows starts and the user logs in
+  Then the widget starts automatically in tray (no visible window)
+
+Scenario: Enable auto-start on macOS
+  Given the user toggles "Auto-start on login" to ON
+  Then a LaunchAgent plist is created at ~/Library/LaunchAgents/com.openclaw.node-widget.plist
+  When macOS starts and the user logs in
+  Then the widget starts automatically (no dock icon)
+
+Scenario: Enable auto-start on Linux
+  Given the user toggles "Auto-start on login" to ON
+  Then a .desktop file is created at ~/.config/autostart/openclaw-node-widget.desktop
+  When the user logs into a desktop session
+  Then the widget starts automatically in tray
+
+Scenario: Disable auto-start
+  Given auto-start is currently ON
+  When the user toggles it OFF
+  Then the platform-specific startup entry is removed
+  And the widget no longer starts on login
+
+Scenario: Widget moved after auto-start set
+  Given auto-start points to /old/path/widget
+  And the user moves the binary to /new/path/widget
+  When the system tries to auto-start on login
+  Then it fails silently (file not found)
+  When the user manually launches from the new path
+  Then the widget detects stale auto-start path
+  And offers to update it
+```
+
+### Upgrade
+
+```gherkin
+Scenario: Upgrade preserves config
+  Given widget v2.0 is installed with config.toml
+  When the user installs v2.1 (MSI overwrite / brew upgrade / apt upgrade)
+  Then the existing config.toml is preserved
+  And the widget starts with the existing settings
+
+Scenario: Config migration (new fields)
+  Given widget v2.0 config.toml has no [log] section
+  When the user upgrades to v2.1 which adds [log] section
+  Then the widget uses default values for missing fields
+  And does not error on unknown/missing sections
+  And on next "Save" from Settings, the new fields are written
+
+Scenario: Downgrade compatibility
+  Given widget v2.1 config.toml has [log] section
+  When the user downgrades to v2.0
+  Then v2.0 ignores the unknown [log] section
+  And loads the rest normally
+```
+
 ---
 
 ## 4. Setup Wizard
